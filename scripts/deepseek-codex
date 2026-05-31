@@ -1,0 +1,168 @@
+#!/bin/bash
+# ============================================================================
+# deepseek-codex — 管理工具
+#   status      健康检查
+#   update-key  更新 API Key
+#   patch       重新应用代理优化补丁
+# ============================================================================
+set -euo pipefail
+
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[0;36m'; NC='\033[0m'
+
+SWITCH_ENV="${HOME}/.config/codex-deepseek-switch/env"
+PROXY_CONFIG="${HOME}/.codex-proxy/config.yaml"
+CODEX_CONFIG="${HOME}/.codex/config.toml"
+PROXY_URL="http://127.0.0.1:8001"
+
+cmd_status() {
+    echo -e "${CYAN}═══ DeepSeek Codex Status ═══${NC}"
+    echo ""
+
+    # 1. API Key
+    if [ -f "$SWITCH_ENV" ]; then
+        source "$SWITCH_ENV" 2>/dev/null || true
+        if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
+            echo -e "  ${GREEN}✓${NC} API Key: ${DEEPSEEK_API_KEY:0:4}****${DEEPSEEK_API_KEY: -4}"
+        else
+            echo -e "  ${RED}✗${NC} API Key not set in $SWITCH_ENV"
+        fi
+    else
+        echo -e "  ${RED}✗${NC} Env file missing: $SWITCH_ENV"
+    fi
+
+    # 2. Proxy running
+    if curl -sS "$PROXY_URL/v1/models" >/dev/null 2>&1; then
+        echo -e "  ${GREEN}✓${NC} Proxy running on $PROXY_URL"
+        # Model list
+        models=$(curl -sS "$PROXY_URL/v1/models" | python3 -c "import sys,json; print(', '.join(m['id'] for m in json.load(sys.stdin)['data']))" 2>/dev/null)
+        echo -e "    Models: $models"
+    else
+        echo -e "  ${RED}✗${NC} Proxy not reachable at $PROXY_URL"
+        echo "    Try: systemctl --user restart codex-proxy"
+    fi
+
+    # 3. Systemd service
+    if systemctl --user is-active codex-proxy.service &>/dev/null; then
+        echo -e "  ${GREEN}✓${NC} Systemd service active"
+    else
+        echo -e "  ${YELLOW}⚠${NC} Systemd service not active"
+    fi
+
+    # 4. Codex config
+    if [ -f "$CODEX_CONFIG" ]; then
+        provider=$(grep "^model_provider[[:space:]]*=" "$CODEX_CONFIG" 2>/dev/null | head -1 | cut -d'"' -f2 || echo "?")
+        model=$(grep "^model[[:space:]]*=" "$CODEX_CONFIG" 2>/dev/null | head -1 | cut -d'"' -f2 || echo "?")
+        echo -e "  ${GREEN}✓${NC} Codex config: provider=$provider model=$model"
+        if grep -q "8001" "$CODEX_CONFIG" 2>/dev/null; then
+            echo -e "    base_url → $PROXY_URL/v1"
+        else
+            echo -e "  ${RED}✗${NC} Config not pointing to proxy (missing :8001)"
+        fi
+    else
+        echo -e "  ${RED}✗${NC} Codex config missing: $CODEX_CONFIG"
+    fi
+
+    # 5. API Key validity
+    if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
+        result=$(curl -sS https://api.deepseek.com/v1/chat/completions \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $DEEPSEEK_API_KEY" \
+            -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"hi"}],"max_tokens":1}' 2>&1)
+        if echo "$result" | python3 -c "import sys,json; json.load(sys.stdin)" &>/dev/null; then
+            echo -e "  ${GREEN}✓${NC} DeepSeek API Key valid"
+        else
+            echo -e "  ${RED}✗${NC} DeepSeek API Key invalid or network error"
+            echo "    $result" | head -1
+        fi
+    fi
+
+    # 6. Desktop wrapper
+    if [ -x "${HOME}/.local/bin/codex-desktop-deepseek" ]; then
+        echo -e "  ${GREEN}✓${NC} Desktop wrapper installed"
+    else
+        echo -e "  ${YELLOW}⚠${NC} Desktop wrapper missing"
+    fi
+
+    # 7. Patch status
+    converter="${HOME}/.npm-global/lib/node_modules/@roson_liu/codex-proxy/lib/converter.js"
+    if [ -f "$converter" ]; then
+        if grep -q "type: 'disabled'" "$converter" 2>/dev/null; then
+            echo -e "  ${GREEN}✓${NC} Proxy optimizations patched"
+        else
+            echo -e "  ${YELLOW}⚠${NC} Proxy optimizations not applied — run: deepseek-codex patch"
+        fi
+    else
+        echo -e "  ${RED}✗${NC} codex-proxy not installed — run: npm install -g @roson_liu/codex-proxy"
+    fi
+
+    echo ""
+    echo -e "${CYAN}Commands:${NC}"
+    echo "  deepseek-codex update-key <new-key>  更换 API Key"
+    echo "  deepseek-codex patch                 重新应用代理补丁"
+    echo "  start-codex-deepseek.sh              切换到 DeepSeek 模式"
+    echo "  rollback-codex-default.sh            恢复默认"
+}
+
+cmd_update_key() {
+    local new_key="${1:-}"
+    if [ -z "$new_key" ]; then
+        echo -n "Enter new DeepSeek API Key: "
+        read -r new_key
+    fi
+    if [ -z "$new_key" ]; then
+        echo -e "${RED}No key provided${NC}"
+        exit 1
+    fi
+
+    # Update env file
+    mkdir -p "$(dirname "$SWITCH_ENV")"
+    cat > "$SWITCH_ENV" << EOF
+# DeepSeek API Key — 唯一的配置入口
+export DEEPSEEK_API_KEY=${new_key}
+EOF
+    chmod 600 "$SWITCH_ENV"
+    echo -e "${GREEN}✓${NC} Key saved to $SWITCH_ENV"
+
+    # Update proxy config
+    if [ -f "$PROXY_CONFIG" ]; then
+        sed -i "s/api_key:.*/api_key: ${new_key}/" "$PROXY_CONFIG"
+        echo -e "${GREEN}✓${NC} Proxy config updated"
+    fi
+
+    # Reload proxy
+    systemctl --user restart codex-proxy.service 2>/dev/null || true
+    sleep 2
+    if curl -sS "$PROXY_URL/v1/models" >/dev/null 2>&1; then
+        echo -e "${GREEN}✓${NC} Proxy restarted with new key"
+    else
+        echo -e "${YELLOW}⚠${NC} Proxy may not be ready — check status"
+    fi
+
+    # Update environment
+    systemctl --user set-environment "DEEPSEEK_API_KEY=${new_key}" 2>/dev/null || true
+    dbus-update-activation-environment --systemd DEEPSEEK_API_KEY 2>/dev/null || true
+    echo -e "${GREEN}✓${NC} Environment updated"
+    echo ""
+    echo "Key updated. Restart Codex Desktop to pick up changes."
+}
+
+cmd_patch() {
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    bash "$SCRIPT_DIR/patch-proxy.sh"
+    systemctl --user restart codex-proxy.service 2>/dev/null || true
+}
+
+# ── main ──
+case "${1:-}" in
+    status)       cmd_status ;;
+    update-key)   cmd_update_key "${2:-}" ;;
+    patch)        cmd_patch ;;
+    *)
+        echo "Usage: deepseek-codex {status|update-key [key]|patch}"
+        echo ""
+        echo "  status      健康检查"
+        echo "  update-key  更换 API Key"
+        echo "  patch       重新应用代理优化补丁"
+        exit 1
+        ;;
+esac

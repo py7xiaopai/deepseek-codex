@@ -90,7 +90,7 @@ def ensure_section(lines, name, entries):
         lines.append("")
         lines.extend(block)
 
-upsert(lines, "model", "deepseek-v4-flash")
+upsert(lines, "model", "deepseek-v4-pro")
 upsert(lines, "model_provider", "deepseek")
 ensure_section(lines, "model_providers.deepseek", {
     "name": "DeepSeek (via codex-proxy)",
@@ -124,7 +124,7 @@ fi
 
 # ── restart Codex Desktop ──
 log "Restarting Codex Desktop..."
-pkill -f "codex-desktop" 2>/dev/null || true
+pkill -f "^/usr/bin/codex-desktop|^/opt/codex-desktop/electron" 2>/dev/null || true
 sleep 2
 nohup /home/jckchen/.local/bin/codex-desktop-deepseek > /dev/null 2>&1 &
 sleep 2
