@@ -1,0 +1,17 @@
+#!/bin/bash
+# Wrapper for Codex Desktop that injects DEEPSEEK_API_KEY from the central env file.
+# Used by ~/.local/share/applications/codex-desktop.desktop
+
+ENV_FILE="${HOME}/.config/codex-deepseek-switch/env"
+
+if [ -f "$ENV_FILE" ]; then
+    set -a
+    source "$ENV_FILE"
+    set +a
+fi
+
+if [ -z "${DEEPSEEK_API_KEY:-}" ]; then
+    echo "WARNING: DEEPSEEK_API_KEY not set in ${ENV_FILE}" >&2
+fi
+
+exec /usr/bin/codex-desktop "$@"

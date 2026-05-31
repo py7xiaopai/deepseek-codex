@@ -1,0 +1,22 @@
+server:
+  port: 8001
+  host: '127.0.0.1'
+channels:
+  deepseek:
+    name: deepseek
+    base_url: https://api.deepseek.com
+    api_key: YOUR_DEEPSEEK_API_KEY_HERE
+    models:
+      - deepseek-v4-flash
+      - deepseek-v4-pro
+model_routing:
+  deepseek-v4-flash:
+    channel: deepseek
+    model: deepseek-v4-flash
+  deepseek-v4-pro:
+    channel: deepseek
+    model: deepseek-v4-pro
+  _default:
+    channel: deepseek
+    model: deepseek-v4-pro
+log_level: INFO

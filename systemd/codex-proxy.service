@@ -1,0 +1,14 @@
+[Unit]
+Description=Codex DeepSeek Proxy (codex-proxy)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%HOME%/.npm-global/bin/codex-proxy --port 8001 --config %HOME%/.codex-proxy/config.yaml --no-open
+Restart=on-failure
+RestartSec=5
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=default.target

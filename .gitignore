@@ -1,0 +1,14 @@
+# Config files with secrets
+*.yaml
+!proxy/config.yaml.template
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
